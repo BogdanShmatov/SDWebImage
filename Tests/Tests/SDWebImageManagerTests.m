@@ -132,16 +132,10 @@
 
 - (void)test08ThatImageTransformerWork {
     XCTestExpectation *expectation = [self expectationWithDescription:@"Image transformer work"];
-    NSURL *url = [NSURL URLWithString:@"https://placehold.co/80x60.jpg"];
+    NSURL *url = [NSURL URLWithString:@"https://placehold.co/80x60.png"];
     SDWebImageTestTransformer *transformer = [[SDWebImageTestTransformer alloc] init];
-    transformer.preserveImageMetadata = YES; // preserve metadata
-    NSData *extData = [@"Foobar" dataUsingEncoding:NSUTF8StringEncoding];
     
-    CGSize transformSize = CGSizeMake(40, 30);
-    UIImage *testImage = [[[UIImage alloc] initWithContentsOfFile:[self testJPEGPath]] sd_resizedImageWithSize:transformSize scaleMode:SDImageScaleModeFill];
-    testImage.sd_imageFormat = SDImageFormatUndefined;
-    testImage.sd_extendedObject = extData;
-    transformer.testImage = testImage;
+    transformer.testImage = [[UIImage alloc] initWithContentsOfFile:[self testJPEGPath]];
     SDImageCache *cache = [[SDImageCache alloc] initWithNamespace:@"Transformer"];
     SDWebImageManager *manager = [[SDWebImageManager alloc] initWithCache:cache loader:SDWebImageDownloader.sharedDownloader];
     NSString *key = [manager cacheKeyForURL:url];
@@ -156,12 +150,6 @@
     SDImageCoderOptions *encodeOptions = @{SDImageCoderEncodeMaxPixelSize : @(CGSizeMake(40, 30))};
     [manager loadImageWithURL:url options:SDWebImageTransformAnimatedImage | SDWebImageTransformVectorImage | SDWebImageWaitStoreCache context:@{SDWebImageContextImageEncodeOptions : encodeOptions} progress:nil completed:^(UIImage * _Nullable image, NSData * _Nullable data, NSError * _Nullable error, SDImageCacheType cacheType, BOOL finished, NSURL * _Nullable imageURL) {
         expect(image).equal(transformer.testImage);
-        // Test metadata
-        expect(image.size).equal(transformSize);
-        expect(image.sd_isTransformed).equal(YES);
-        expect(image.sd_imageFormat).equal(SDImageFormatJPEG); // override from full image
-        expect(image.sd_extendedObject).beNil(); // override from full image
-        
         // Query the encoded data again
         NSData *encodedData = [cache diskImageDataForKey:transformedKey];
         UIImage *encodedImage = [UIImage sd_imageWithData:encodedData];
@@ -268,7 +256,6 @@
     SDWebImageManager *manager = [[SDWebImageManager alloc] initWithCache:cache loader:SDWebImageDownloader.sharedDownloader];
     SDWebImageTestTransformer *transformer = [[SDWebImageTestTransformer alloc] init];
     transformer.testImage = [[UIImage alloc] initWithContentsOfFile:[self testJPEGPath]];
-    transformer.preserveImageMetadata = NO; // the transformed image should not inherite any attribute from original one
     manager.transformer = transformer;
     
     // test: original image -> disk only, transformed image -> memory only
@@ -377,22 +364,16 @@
     NSURL *url = [NSURL URLWithString:@"https://placehold.co/101x101.png"];
     NSString *key = [SDWebImageManager.sharedManager cacheKeyForURL:url];
     NSData *testImageData = [NSData dataWithContentsOfFile:[self testJPEGPath]];
-    UIImage *testImage = [UIImage sd_imageWithData:testImageData];
     [SDImageCache.sharedImageCache storeImageDataToDisk:testImageData forKey:key];
     
     // Query memory first
     [SDWebImageManager.sharedManager loadImageWithURL:url options:SDWebImageFromCacheOnly context:@{SDWebImageContextQueryCacheType : @(SDImageCacheTypeMemory)} progress:nil completed:^(UIImage * _Nullable image, NSData * _Nullable data, NSError * _Nullable error, SDImageCacheType cacheType, BOOL finished, NSURL * _Nullable imageURL) {
         expect(image).beNil();
         expect(cacheType).equal(SDImageCacheTypeNone);
-        // Store the image to memory
-        [SDImageCache.sharedImageCache storeImageToMemory:testImage forKey:key];
         // Query disk secondly
         [SDWebImageManager.sharedManager loadImageWithURL:url options:SDWebImageFromCacheOnly context:@{SDWebImageContextQueryCacheType : @(SDImageCacheTypeDisk)} progress:nil completed:^(UIImage * _Nullable image2, NSData * _Nullable data2, NSError * _Nullable error2, SDImageCacheType cacheType2, BOOL finished2, NSURL * _Nullable imageURL2) {
             expect(image2).notTo.beNil();
             expect(cacheType2).equal(SDImageCacheTypeDisk);
-            // We should ensure that this disk image is not the same one in-memory
-            expect(image2 != testImage).beTruthy();
-            [SDImageCache.sharedImageCache removeImageFromMemoryForKey:key];
             [SDImageCache.sharedImageCache removeImageFromDiskForKey:key];
             [expectation fulfill];
         }];
@@ -646,8 +627,7 @@
 
 - (void)test22ThatForceDecodePolicyAutomatic {
     XCTestExpectation *expectation = [self expectationWithDescription:@"Automatic policy with ICC profile colorspace image should force-decode"];
-    NSString * testImagePath = [[NSBundle bundleForClass:[self class]] pathForResource:@"TestICCProfile" ofType:@"jpg"];
-    NSURL *url = [NSURL fileURLWithPath:testImagePath];
+    NSURL *url = [NSURL URLWithString:@"http://photodb.illusdolphin.net/media/15292/browsertest.jpg"];
     SDImageCoderHelper.defaultDecodeSolution = SDImageCoderDecodeSolutionCoreGraphics; // Temp set
     [SDWebImageManager.sharedManager loadImageWithURL:url options:SDWebImageFromLoaderOnly context:@{SDWebImageContextImageForceDecodePolicy : @(SDImageForceDecodePolicyAutomatic)} progress:nil completed:^(UIImage * _Nullable image, NSData * _Nullable data, NSError * _Nullable error, SDImageCacheType cacheType, BOOL finished, NSURL * _Nullable imageURL) {
         expect(image).notTo.beNil();

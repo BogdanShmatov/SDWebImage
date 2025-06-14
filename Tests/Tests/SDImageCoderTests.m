@@ -206,10 +206,10 @@
 - (void)test13ThatHEICWorks {
     if (@available(iOS 11, tvOS 11, macOS 10.13, *)) {
         NSURL *heicURL = [[NSBundle bundleForClass:[self class]] URLForResource:@"TestImage" withExtension:@"heic"];
-#if SD_MAC
-        BOOL supportsEncoding = !SDTestCase.isCI; // GitHub Action Mac env currently does not support HEIC encoding
+#if SD_UIKIT
+        BOOL supportsEncoding = YES; // iPhone Simulator after Xcode 9.3 support HEIC encoding
 #else
-        BOOL supportsEncoding = YES; // GitHub Action Mac env with simulator, supported from 20240707.1
+        BOOL supportsEncoding = NO; // Travis-CI Mac env currently does not support HEIC encoding
 #endif
         [self verifyCoder:[SDImageIOCoder sharedCoder]
         withLocalImageURL:heicURL
@@ -221,10 +221,9 @@
 - (void)test14ThatHEIFWorks {
     if (@available(iOS 11, tvOS 11, macOS 10.13, *)) {
         NSURL *heifURL = [[NSBundle bundleForClass:[self class]] URLForResource:@"TestImage" withExtension:@"heif"];
-        BOOL supportsEncoding = NO; // public.heif UTI alwsays return false, use public.heic
         [self verifyCoder:[SDImageIOCoder sharedCoder]
         withLocalImageURL:heifURL
-         supportsEncoding:supportsEncoding
+         supportsEncoding:NO
           isAnimatedImage:NO];
     }
 }
@@ -240,10 +239,14 @@
 
 - (void)test16ThatHEICAnimatedWorks {
     if (@available(iOS 13, tvOS 13, macOS 10.15, *)) {
-        NSURL *heicURL = [[NSBundle bundleForClass:[self class]] URLForResource:@"TestImageAnimated" withExtension:@"heics"];
-        BOOL supportsEncoding = !SDTestCase.isCI; // GitHub Action Mac env currently does not support HEICS animated encoding (but HEIC supported, I don't know why)
-        // See: #3227
+        NSURL *heicURL = [[NSBundle bundleForClass:[self class]] URLForResource:@"TestImageAnimated" withExtension:@"heic"];
+#if SD_UIKIT
         BOOL isAnimatedImage = YES;
+        BOOL supportsEncoding = YES; // iPhone Simulator after Xcode 9.3 support HEIC encoding
+#else
+        BOOL isAnimatedImage = NO; // Travis-CI Mac env does not upgrade to macOS 10.15
+        BOOL supportsEncoding = NO; // Travis-CI Mac env currently does not support HEIC encoding
+#endif
         [self verifyCoder:[SDImageHEICCoder sharedCoder]
         withLocalImageURL:heicURL
          supportsEncoding:supportsEncoding
@@ -302,14 +305,6 @@
 }
 
 - (void)test21ThatEmbedThumbnailHEICWorks {
-#if SD_MAC
-    BOOL supportsEncoding = !SDTestCase.isCI; // GitHub Action Mac env currently does not support HEIC encoding
-#else
-    BOOL supportsEncoding = YES; // GitHub Action Mac env with simulator, supported from 20240707.1
-#endif
-    if (!supportsEncoding) {
-        return;
-    }
     if (@available(iOS 11, tvOS 11, macOS 10.13, *)) {
         // The input HEIC does not contains any embed thumbnail
         NSURL *heicURL = [[NSBundle bundleForClass:[self class]] URLForResource:@"TestImage" withExtension:@"heic"];
@@ -353,10 +348,6 @@
     CGSize imageSize = image.size;
     expect(imageSize.width).equal(400);
     expect(imageSize.height).equal(263);
-    // `CGImageSourceCreateThumbnailAtIndex` should always produce non-lazy CGImage
-    CGImageRef cgImage = image.CGImage;
-    expect([SDImageCoderHelper CGImageIsLazy:cgImage]).beFalsy();
-    expect(image.sd_isDecoded).beTruthy();
 }
 
 - (void)test23ThatThumbnailEncodeCalculation {
@@ -364,10 +355,6 @@
     NSData *testImageData = [NSData dataWithContentsOfFile:testImagePath];
     UIImage *image = [SDImageIOCoder.sharedCoder decodedImageWithData:testImageData options:nil];
     expect(image.size).equal(CGSizeMake(5250, 3450));
-    // `CGImageSourceCreateImageAtIndex` should always produce lazy CGImage
-    CGImageRef cgImage = image.CGImage;
-    expect([SDImageCoderHelper CGImageIsLazy:cgImage]).beTruthy();
-    expect(image.sd_isDecoded).beFalsy();
     CGSize thumbnailSize = CGSizeMake(4000, 4000); // 3450 < 4000 < 5250
     NSData *encodedData = [SDImageIOCoder.sharedCoder encodedDataWithImage:image format:SDImageFormatJPEG options:@{
             SDImageCoderEncodeMaxPixelSize: @(thumbnailSize)
@@ -547,42 +534,14 @@
 }
 
 - (void)test29ThatJFIFDecodeOrientationShouldNotApplyTwice {
-    // I don't think this is SDWebImage's issue, it's Apple's ImgeIO Bug, but user complain about this: #3594
-    // In W3C standard, JFIF should always be orientation up, and should not contains EXIF orientation
-    // But some bad image editing tool will generate this kind of image :(
     NSURL *url = [[NSBundle bundleForClass:[self class]] URLForResource:@"TestJFIF" withExtension:@"jpg"];
     NSData *data = [NSData dataWithContentsOfURL:url];
     
     UIImage *image = [SDImageIOCoder.sharedCoder decodedImageWithData:data options:nil];
-    expect(image.sd_imageFormat).equal(SDImageFormatJPEG);
 #if SD_UIKIT
     UIImageOrientation orientation = image.imageOrientation;
-    expect(orientation).equal(UIImageOrientationDown);
+    expect(orientation).equal(UIImageOrientationUp);
 #endif
-    
-    UIImage *systemImage = [[UIImage alloc] initWithData:data];
-#if SD_UIKIT
-    orientation = systemImage.imageOrientation;
-    if (@available(iOS 18.0, tvOS 18.0, watchOS 11.0, *)) {
-        // Apple fix/hack this kind of JFIF on iOS 18
-        expect(orientation).equal(UIImageOrientationUp);
-    } else {
-        expect(orientation).equal(UIImageOrientationDown);
-    }
-#endif
-    
-    // Check bitmap color equal, between our usage of ImageIO decoder and Apple system API behavior
-    // So, this means, if Apple has bugs, we have bugs too, it's not our fault :)
-    UIColor *testColor1 = [image sd_colorAtPoint:CGPointMake(1, 1)];
-    UIColor *testColor2 = [systemImage sd_colorAtPoint:CGPointMake(1, 1)];
-    CGFloat r1, g1, b1, a1;
-    CGFloat r2, g2, b2, a2;
-    [testColor1 getRed:&r1 green:&g1 blue:&b1 alpha:&a1];
-    [testColor2 getRed:&r2 green:&g2 blue:&b2 alpha:&a2];
-    expect(r1).beCloseToWithin(r2, 0.01);
-    expect(g1).beCloseToWithin(g2, 0.01);
-    expect(b1).beCloseToWithin(b2, 0.01);
-    expect(a1).beCloseToWithin(a2, 0.01);
     
     // Manual test again for Apple's API
     CGImageSourceRef source = CGImageSourceCreateWithData((__bridge CFDataRef)data, nil);
@@ -610,155 +569,12 @@
     url = [[NSBundle bundleForClass:[self class]] URLForResource:@"RGBA16PNG" withExtension:@"png"];
     data = [NSData dataWithContentsOfURL:url];
     decodedImage = [SDImageIOCoder.sharedCoder decodedImageWithData:data options:nil];
-    CGBitmapInfo bitmapInfo = CGImageGetBitmapInfo(decodedImage.CGImage);
-    size_t bpc = CGImageGetBitsPerComponent(decodedImage.CGImage);
-    expect(bpc).equal(16);
-    CGImageAlphaInfo alphaInfo = bitmapInfo & kCGBitmapAlphaInfoMask;
-    CGImageByteOrderInfo byteOrderInfo = bitmapInfo & kCGBitmapByteOrderMask;
-    expect(alphaInfo).equal(kCGImageAlphaLast);
-    expect(byteOrderInfo).equal(kCGImageByteOrder16Little);
-}
-
-- (void)test31ThatSVGShouldUseNativeImageClass {
-    NSURL *url = [[NSBundle bundleForClass:[self class]] URLForResource:@"TestImage" withExtension:@"svg"];
-    NSData *data = [NSData dataWithContentsOfURL:url];
-    SDAnimatedImage *animatedImage = [SDAnimatedImage imageWithData:data];
-    expect(animatedImage).beNil();
-    UIImage *image = [UIImage sd_imageWithData:data];
-    Class SVGCoderClass = NSClassFromString(@"SDImageSVGCoder");
-    if (SVGCoderClass && [SVGCoderClass sharedCoder]) {
-        expect(image).notTo.beNil();
-        // Vector version
-        expect(image.sd_isVector).beTruthy();
-    } else {
-        // Platform does not support SVG
-        expect(image).beNil();
-    }
-}
-
-- (void)test32ThatISOHDRDecodeWorks {
-    // Only test for iOS 17+/macOS 14+/visionOS 1+, or ImageIO decoder does not support HDR
-#if SD_MAC || SD_IOS || SD_VISION
-    if (@available(macOS 14, iOS 17, tvOS 17, watchOS 10, *)) {
-        NSArray *formats = @[@"heic", @"avif", @"jxl"];
-        for (NSString *format in formats) {
-            NSURL *url = [[NSBundle bundleForClass:[self class]] URLForResource:@"TestHDR" withExtension:format];
-            NSData *data = [NSData dataWithContentsOfURL:url];
-            // Decoding
-            UIImage *HDRImage = [SDImageIOCoder.sharedCoder decodedImageWithData:data options:@{SDImageCoderDecodeToHDR : @(YES)}];
-            UIImage *SDRImage = [SDImageIOCoder.sharedCoder decodedImageWithData:data options:@{SDImageCoderDecodeToHDR : @(NO)}];
-            
-            expect(HDRImage).notTo.beNil();
-            expect(SDRImage).notTo.beNil();
-            
-            expect([SDImageCoderHelper CGImageIsHDR:HDRImage.CGImage]).beTruthy();
-            expect(HDRImage.sd_isHighDynamicRange).beTruthy();
-            // Current we lack of some HDR RGBA1010102
-            size_t HDRBPC = CGImageGetBitsPerComponent(HDRImage.CGImage);
-            expect(HDRBPC).beGreaterThan(8);
-            expect([HDRImage sd_colorAtPoint:CGPointMake(1, 1)]).beNil();
-            
-            // FIXME: on Simulator, the SDR decode options will not take effect, so SDR is the same as HDR
-#if !TARGET_OS_SIMULATOR
-            expect([SDImageCoderHelper CGImageIsHDR:SDRImage.CGImage]).beFalsy();
-            expect(SDRImage.sd_isHighDynamicRange).beFalsy();
-            size_t SDRBPC = CGImageGetBitsPerComponent(SDRImage.CGImage);
-            expect(SDRBPC).beLessThanOrEqualTo(8);
-            expect([SDRImage sd_colorAtPoint:CGPointMake(1, 1)]).notTo.beNil();
-#endif
-        }
-    }
-#endif
-}
-
-- (void)test33ThatGainMapHDRDecodeWorks {
-    // JPEG Gain Map HDR need iOS 18+
-    // GitHub Action virtualization framework contains issue for Gain Map HDR convert:
-    // [xctest] +[HDRImageConverter imageConverterWithOptions:]:40: ☀️ Failed to initialize Metal converter, falling back to SIMD for image conversion (slow)
-    if (SDTestCase.isCI) {
-        return;
-    }
-#if SD_MAC || SD_IOS || SD_VISION
-    if (@available(macOS 15, iOS 18, tvOS 18, watchOS 11, *)) {
-        NSArray *formats = @[@"jpeg"];
-        for (NSString *format in formats) {
-            NSURL *url = [[NSBundle bundleForClass:[self class]] URLForResource:@"TestHDR" withExtension:format];
-            NSData *data = [NSData dataWithContentsOfURL:url];
-            // Decoding
-            UIImage *HDRImage = [SDImageIOCoder.sharedCoder decodedImageWithData:data options:@{SDImageCoderDecodeToHDR : @(YES)}];
-            UIImage *SDRImage = [SDImageIOCoder.sharedCoder decodedImageWithData:data options:@{SDImageCoderDecodeToHDR : @(NO)}];
-            
-            expect(HDRImage).notTo.beNil();
-            expect(SDRImage).notTo.beNil();
-            
-            // Gain Map HDR does not use Rec. 2100 color space
-            size_t HDRBPC = CGImageGetBitsPerComponent(HDRImage.CGImage);
-            size_t SDRBPC = CGImageGetBitsPerComponent(SDRImage.CGImage);
-            expect(HDRBPC).beGreaterThan(8);
-            expect(SDRBPC).beLessThanOrEqualTo(8);
-//            expect([SDImageCoderHelper CGImageIsHDR:HDRImage.CGImage]).beTruthy();
-//            expect(HDRImage.sd_isHighDynamicRange).beTruthy();
-        }
-    }
-#endif
-}
-
-- (void)test34ThatHDREncodeWorks {
-    // FIXME: Encoding need iOS 18+/macOS 15+, No simulator
-    // GitHub Action virtualization framework contains issue for Gain Map HDR convert:
-    if (SDTestCase.isCI) {
-        return;
-    }
-    // Actually we test 4 cases, because decoded CGImage can contains gain map or not
-    // heic -> heic / heic -> jpeg / jpeg(gain map) -> heic / jpeg(gain map) -> jpeg
-    if (@available(macOS 15, iOS 18, tvOS 18, watchOS 11, *)) {
-        NSArray *decodeFormats = @[@"heic", @"jpeg"];
-        for (NSString *decodeFormat in decodeFormats) {
-            NSURL *url = [[NSBundle bundleForClass:[self class]] URLForResource:@"TestHDR" withExtension:decodeFormat];
-            NSData *data = [NSData dataWithContentsOfURL:url];
-            // Decoding
-            UIImage *HDRImage = [SDImageIOCoder.sharedCoder decodedImageWithData:data options:@{SDImageCoderDecodeToHDR : @(YES)}];
-            float headroom = CGImageGetContentHeadroom(HDRImage.CGImage);
-            expect(headroom).beGreaterThan(1);
-#if !TARGET_OS_SIMULATOR
-            NSArray *encodeFormats = @[@"heic", @"jpeg"];
-            for (NSString *encodeFormat in encodeFormats) {
-                NSLog(@"Testing HDR encodde from original : %@ to %@", decodeFormat, encodeFormat);
-                // HEIC with ISO Gain Map
-                SDImageFormat format = SDImageFormatHEIC;
-                if ([encodeFormat isEqualToString:@"jpeg"]) {
-                    // JPEG with XMP Gain Map
-                    format = SDImageFormatJPEG;
-                }
-                NSData *SDRData = [SDImageIOCoder.sharedCoder encodedDataWithImage:HDRImage format:format options:@{SDImageCoderEncodeToHDR : @(SDImageHDRTypeSDR)}];
-                NSData *HDRData = [SDImageIOCoder.sharedCoder encodedDataWithImage:HDRImage format:format options:@{SDImageCoderEncodeToHDR : @(SDImageHDRTypeISOHDR)}];
-                NSData *HDRGainMapData = [SDImageIOCoder.sharedCoder encodedDataWithImage:HDRImage format:format options:@{SDImageCoderEncodeToHDR : @(SDImageHDRTypeISOGainMap)}];
-                expect(SDRData).notTo.beNil();
-                expect(HDRData).notTo.beNil();
-                expect(HDRGainMapData).notTo.beNil();
-                // JPEG has no built-in support Gain Map, so it stored in XMP and be larger
-                if ([encodeFormat isEqualToString:@"jpeg"]) {
-                    expect(HDRGainMapData.length).beGreaterThan(HDRData.length);
-                }
-                
-                // Check gain map information
-                CGImageSourceRef source = CGImageSourceCreateWithData((__bridge CFDataRef)HDRGainMapData, NULL);
-                NSDictionary *gainMap = [self gainMapFromImageSource:source];
-                expect(gainMap.count).beGreaterThan(0);
-                // At least gain map contains `kCGImageAuxiliaryDataInfoMetadata`
-                CGImageMetadataRef meta = (__bridge CGImageMetadataRef)(gainMap[(__bridge NSString *)kCGImageAuxiliaryDataInfoMetadata]);
-                expect(meta).notTo.beNil();
-                
-                // A check for redecoded CGImage
-                CGImageRef redecodeSDRImage = CGImageSourceCreateImageAtIndex(source, 0, nil);
-                expect(redecodeSDRImage).notTo.beNil();
-                headroom = CGImageGetContentHeadroom(redecodeSDRImage);
-                expect(headroom).equal(1);
-                CFRelease(source);
-            }
-#endif
-        }
-    }
+    testColor1 = [decodedImage sd_colorAtPoint:CGPointMake(100, 1)];
+    [testColor1 getRed:&r1 green:&g1 blue:&b1 alpha:&a1];
+    expect(r1).beCloseToWithin(0.60, 0.01);
+    expect(g1).beCloseToWithin(0.60, 0.01);
+    expect(b1).beCloseToWithin(0.33, 0.01);
+    expect(a1).beCloseToWithin(0.33, 0.01);
 }
 
 #pragma mark - Utils
@@ -888,19 +704,6 @@ withLocalImageURL:(NSURL *)imageUrl
     NSArray *thumbnailImages = imageProperties[(__bridge NSString *)kCGImagePropertyThumbnailImages];
     
     return thumbnailImages;
-}
-
-- (NSDictionary *)gainMapFromImageSource:(CGImageSourceRef)source {
-    if (@available(macOS 15, iOS 18, tvOS 18, watchOS 11, *)) {
-        CFDictionaryRef ISOGainMap = CGImageSourceCopyAuxiliaryDataInfoAtIndex(source, 0, kCGImageAuxiliaryDataTypeISOGainMap);
-        CFDictionaryRef HDRGainMap = CGImageSourceCopyAuxiliaryDataInfoAtIndex(source, 0, kCGImageAuxiliaryDataTypeHDRGainMap);
-        NSDictionary *result = ISOGainMap ? (__bridge_transfer NSDictionary *)ISOGainMap : (__bridge_transfer NSDictionary *)HDRGainMap;
-        if (HDRGainMap) CFRelease(HDRGainMap);
-        if (ISOGainMap) CFRelease(ISOGainMap);
-        return result;
-    } else {
-        return nil;
-    }
 }
 
 #pragma mark - Utils

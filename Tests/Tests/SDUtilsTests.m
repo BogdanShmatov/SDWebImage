@@ -123,12 +123,16 @@
 #endif
     expect(format.scale).equal(screenScale);
     expect(format.opaque).beFalsy();
+#if SD_UIKIT
     expect(format.preferredRange).equal(SDGraphicsImageRendererFormatRangeAutomatic);
+#elif SD_MAC
+    expect(format.preferredRange).equal(SDGraphicsImageRendererFormatRangeStandard);
+#endif
     CGSize size = CGSizeMake(100, 100);
     SDGraphicsImageRenderer *renderer = [[SDGraphicsImageRenderer alloc] initWithSize:size format:format];
 #if SD_MAC
     // GitHub action's Mac does not connect to a display, so the ImageRenderer color space is wrong :(
-    if (SDTestCase.isCI) {
+    if (NSProcessInfo.processInfo.environment[@"GITHUB_ACTIONS"]) {
         return;
     }
 #endif
@@ -171,12 +175,9 @@
     dispatch_queue_t queue = dispatch_queue_create("testSDCallbackQueue", NULL);
     SDCallbackQueue *callbackQueue = [[SDCallbackQueue alloc] initWithDispatchQueue:queue];
     __block BOOL called = NO;
-#pragma clang diagnostic push
-#pragma clang diagnostic ignored "-Wdeprecated-declarations"
     [callbackQueue sync:^{
         called = YES;
     }];
-#pragma clang diagnostic pop
     expect(called).beTruthy();
     
     __block BOOL called1 = NO;

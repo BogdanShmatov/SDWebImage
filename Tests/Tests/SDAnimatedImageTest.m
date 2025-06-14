@@ -10,7 +10,6 @@
 #import "SDTestCase.h"
 #import "SDInternalMacros.h"
 #import "SDImageFramePool.h"
-#import "SDWebImageTestTransformer.h"
 #import <KVOController/KVOController.h>
 
 static const NSUInteger kTestGIFFrameCount = 5; // local TestImage.gif loop count
@@ -311,29 +310,22 @@ static BOOL _isCalled;
 }
 
 - (void)test22AnimatedImageViewCategory {
-    if (SDTestCase.isCI) {
-        // This case cause random failure on GitHub Action only (but not local testing). Disabled for now
-        return;
-    }
     XCTestExpectation *expectation = [self expectationWithDescription:@"test SDAnimatedImageView view category"];
     SDAnimatedImageView *imageView = [SDAnimatedImageView new];
-    NSURL *testURL = [NSURL URLWithString:@"https://media.giphy.com/media/3oeji6siihbdrxxi40/giphy.gif"];
-    [SDImageCache.sharedImageCache removeImageFromMemoryForKey:testURL.absoluteString];
-    [SDImageCache.sharedImageCache removeImageFromDiskForKey:testURL.absoluteString];
-    // I don't know why, but `fromLoaderOnly` is need for iOS Unit Test on GitHub Action
-    [imageView sd_setImageWithURL:testURL placeholderImage:nil options:SDWebImageFromLoaderOnly completed:^(UIImage * _Nullable image, NSError * _Nullable error, SDImageCacheType cacheType, NSURL * _Nullable imageURL) {
+    NSURL *testURL = [NSURL URLWithString:kTestGIFURL];
+    [imageView sd_setImageWithURL:testURL completed:^(UIImage * _Nullable image, NSError * _Nullable error, SDImageCacheType cacheType, NSURL * _Nullable imageURL) {
         expect(error).to.beNil();
         expect(image).notTo.beNil();
         expect([image isKindOfClass:[SDAnimatedImage class]]).beTruthy();
         [expectation fulfill];
     }];
-    [self waitForExpectationsWithTimeout:kAsyncTestTimeout * 2 handler:nil];
+    [self waitForExpectationsWithCommonTimeout];
 }
 
 - (void)test23AnimatedImageViewCategoryProgressive {
     XCTestExpectation *expectation = [self expectationWithDescription:@"test SDAnimatedImageView view category progressive"];
     SDAnimatedImageView *imageView = [SDAnimatedImageView new];
-    NSURL *testURL = [NSURL URLWithString:@"https://media.giphy.com/media/UEsrLdv7ugRTq/giphy.gif"];
+    NSURL *testURL = [NSURL URLWithString:kTestGIFURL];
     [SDImageCache.sharedImageCache removeImageFromMemoryForKey:testURL.absoluteString];
     [SDImageCache.sharedImageCache removeImageFromDiskForKey:testURL.absoluteString];
     [imageView sd_setImageWithURL:testURL placeholderImage:nil options:SDWebImageProgressiveLoad progress:^(NSInteger receivedSize, NSInteger expectedSize, NSURL * _Nullable targetURL) {
@@ -360,19 +352,13 @@ static BOOL _isCalled;
 - (void)test24AnimatedImageViewCategoryDiskCache {
     XCTestExpectation *expectation = [self expectationWithDescription:@"test SDAnimatedImageView view category disk cache"];
     SDAnimatedImageView *imageView = [SDAnimatedImageView new];
-    NSURL *testURL = [NSURL URLWithString:@"https://foobar.non-exists.org/bizbuz.gif"];
-    NSString *testKey = testURL.absoluteString;
-    [SDImageCache.sharedImageCache removeImageFromMemoryForKey:testKey];
-    [SDImageCache.sharedImageCache removeImageFromDiskForKey:testKey];
-    NSData *imageData = [self testGIFData];
-    [SDImageCache.sharedImageCache storeImageDataToDisk:imageData forKey:testKey];
+    NSURL *testURL = [NSURL URLWithString:kTestGIFURL];
+    [SDImageCache.sharedImageCache removeImageFromMemoryForKey:testURL.absoluteString];
     [imageView sd_setImageWithURL:testURL placeholderImage:nil completed:^(UIImage * _Nullable image, NSError * _Nullable error, SDImageCacheType cacheType, NSURL * _Nullable imageURL) {
         expect(error).to.beNil();
         expect(image).notTo.beNil();
         expect(cacheType).equal(SDImageCacheTypeDisk);
         expect([image isKindOfClass:[SDAnimatedImage class]]).beTruthy();
-        [SDImageCache.sharedImageCache removeImageFromMemoryForKey:testKey];
-        [SDImageCache.sharedImageCache removeImageFromDiskForKey:testKey];
         [expectation fulfill];
     }];
     [self waitForExpectationsWithCommonTimeout];
@@ -799,56 +785,6 @@ static BOOL _isCalled;
     }
 }
 #endif
-
-- (void)test37AnimatedImageWithStaticDataBehavior {
-    UIImage *image = [[SDAnimatedImage alloc] initWithData:[self testJPEGData]];
-    // UIImage+Metadata.h
-    expect(image).notTo.beNil();
-    expect(image.sd_isAnimated).beFalsy();
-    expect(image.sd_imageFormat).equal(SDImageFormatJPEG);
-    expect(image.sd_imageFrameCount).equal(1);
-    expect(image.sd_imageLoopCount).equal(0);
-    // SDImageCoderHelper.h
-    UIImage *decodedImage = [SDImageCoderHelper decodedImageWithImage:image policy:SDImageForceDecodePolicyAutomatic];
-    expect(decodedImage).notTo.equal(image);
-    // SDWebImageDefine.h
-    UIImage *scaledImage = SDScaledImageForScaleFactor(2.0, image);
-    expect(scaledImage).notTo.equal(image);
-}
-
-- (void)testAnimationTransformerWorks {
-    XCTestExpectation *expectation = [self expectationWithDescription:@"test SDAnimatedImageView animationTransformer works"];
-    SDAnimatedImageView *imageView = [SDAnimatedImageView new];
-    // Setup transformer, showing which hook all frames into the test image
-    UIImage *testImage = [[UIImage alloc] initWithData:[self testJPEGData]];
-    SDWebImageTestTransformer *transformer = [SDWebImageTestTransformer new];
-    transformer.testImage = testImage;
-    imageView.animationTransformer = transformer;
-    
-#if SD_UIKIT
-    [self.window addSubview:imageView];
-#else
-    [self.window.contentView addSubview:imageView];
-#endif
-    SDAnimatedImage *image = [SDAnimatedImage imageWithData:[self testGIFData]];
-    imageView.image = image;
-#if SD_UIKIT
-    [imageView startAnimating];
-#else
-    imageView.animates = YES;
-#endif
-    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.5 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
-        // 0.5s is not finished, frame index should not be 0
-        expect(imageView.player.framePool.currentFrameCount).beGreaterThan(0);
-        expect(imageView.currentFrameIndex).beGreaterThan(0);
-        // Test the current frame image is hooked by transformer
-        expect(imageView.currentFrame).equal(testImage);
-        
-        [expectation fulfill];
-    });
-    
-    [self waitForExpectationsWithCommonTimeout];
-}
 
 #pragma mark - Helper
 

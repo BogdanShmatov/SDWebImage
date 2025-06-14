@@ -14,12 +14,6 @@
 static NSString *kTestImageKeyJPEG = @"TestImageKey.jpg";
 static NSString *kTestImageKeyPNG = @"TestImageKey.png";
 
-@interface SDCallbackQueue ()
-
-@property (nonatomic, strong, nonnull) dispatch_queue_t queue;
-
-@end
-
 @interface SDImageCacheTests : SDTestCase <NSFileManagerDelegate>
 
 @end
@@ -380,12 +374,12 @@ static NSString *kTestImageKeyPNG = @"TestImageKey.png";
         
         [[SDImageCodersManager sharedManager] removeCoder:testDecoder];
         
-        [cache removeImageFromMemoryForKey:key];
-        [cache removeImageFromDiskForKey:key];
-        [expectation fulfill];
+        [[SDImageCache sharedImageCache] removeImageForKey:key withCompletion:^{
+            [expectation fulfill];
+        }];
     }];
     
-    [self waitForExpectationsWithTimeout:10 handler:nil];
+    [self waitForExpectationsWithCommonTimeout];
 }
 
 - (void)test41StoreImageDataToDiskWithCustomFileManager {
@@ -565,31 +559,18 @@ static NSString *kTestImageKeyPNG = @"TestImageKey.png";
     NSFileManager *fileManager = [[NSFileManager alloc] init];
     config.fileManager = fileManager;
     
-    // Fake to store a%@.png into old path
+    // Fake to store a.png into old path
     NSString *newDefaultPath = [[[self userCacheDirectory] stringByAppendingPathComponent:@"com.hackemist.SDImageCache"] stringByAppendingPathComponent:@"default"];
     NSString *oldDefaultPath = [[[self userCacheDirectory] stringByAppendingPathComponent:@"default"] stringByAppendingPathComponent:@"com.hackemist.SDWebImageCache.default"];
     [fileManager createDirectoryAtPath:oldDefaultPath withIntermediateDirectories:YES attributes:nil error:nil];
-    
-    // Create 100 files to Migrate
-    for (NSUInteger i = 0; i < 100; i++) {
-        NSString *fileName = [NSString stringWithFormat:@"a%@.png", @(i)];
-        [fileManager createFileAtPath:[oldDefaultPath stringByAppendingPathComponent:fileName] contents:[NSData dataWithContentsOfFile:[self testPNGPath]] attributes:nil];
-    }
-    
+    [fileManager createFileAtPath:[oldDefaultPath stringByAppendingPathComponent:@"a.png"] contents:[NSData dataWithContentsOfFile:[self testPNGPath]] attributes:nil];
     // Call migration
     SDDiskCache *diskCache = [[SDDiskCache alloc] initWithCachePath:newDefaultPath config:config];
     [diskCache moveCacheDirectoryFromPath:oldDefaultPath toPath:newDefaultPath];
     
-    // Expect a%@.png into new path and oldDefaultPath is deleted
-    BOOL isDirectory = NO;
-    for (NSUInteger i = 0; i < 100; i++) {
-        NSString *fileName = [NSString stringWithFormat:@"a%@.png", @(i)];
-        BOOL newFileExist = [fileManager fileExistsAtPath:[newDefaultPath stringByAppendingPathComponent:fileName] isDirectory:&isDirectory];
-        expect(newFileExist).beTruthy();
-        expect(isDirectory).beFalsy();
-    }
-    BOOL oldDefaultPathExist = [fileManager fileExistsAtPath:oldDefaultPath];
-    expect(oldDefaultPathExist).beFalsy();
+    // Expect a.png into new path
+    BOOL exist = [fileManager fileExistsAtPath:[newDefaultPath stringByAppendingPathComponent:@"a.png"]];
+    expect(exist).beTruthy();
 }
 
 - (void)test45DiskCacheRemoveExpiredData {
@@ -676,63 +657,31 @@ static NSString *kTestImageKeyPNG = @"TestImageKey.png";
     [self waitForExpectationsWithCommonTimeout];
 }
 
-/*
 - (void)test48CacheUseConcurrentIOQueue {
-    XCTestExpectation *expectation1 = [self expectationWithDescription:@"SDImageCache concurrent ioQueue1"];
-    XCTestExpectation *expectation2 = [self expectationWithDescription:@"SDImageCache concurrent ioQueue2"];
+    XCTestExpectation *expectation = [self expectationWithDescription:@"SDImageCache concurrent ioQueue"];
+    expectation.expectedFulfillmentCount = 2;
     
     SDImageCacheConfig *config = [SDImageCacheConfig new];
     dispatch_queue_attr_t attr = dispatch_queue_attr_make_with_qos_class(DISPATCH_QUEUE_CONCURRENT, QOS_CLASS_BACKGROUND, 0);
     config.ioQueueAttributes = attr;
     
     SDImageCache *cache = [[SDImageCache alloc] initWithNamespace:@"Concurrent" diskCacheDirectory:@"/" config:config];
+    NSData *pngData = [NSData dataWithContentsOfFile:[self testPNGPath]];
     // Added test case for custom queue
-    SDCallbackQueue *globalQueue = SDCallbackQueue.globalQueue;
-    globalQueue.policy = SDCallbackPolicyDispatch;
-    [globalQueue async:^{
-        SDCallbackQueue *currentQueue = SDCallbackQueue.currentQueue;
-        SDWebImageContext *context = @{SDWebImageContextCallbackQueue : currentQueue};
-        expect(globalQueue.queue).equal(currentQueue.queue);
+    [SDCallbackQueue.globalQueue async:^{
+        SDWebImageContext *context = @{SDWebImageContextCallbackQueue : SDCallbackQueue.currentQueue};
         expect(NSThread.isMainThread).beFalsy();
         [cache queryCacheOperationForKey:@"Key1" options:0 context:context done:^(UIImage * _Nullable image, NSData * _Nullable data, SDImageCacheType cacheType) {
-            SDCallbackQueue *currentQueue1 = SDCallbackQueue.currentQueue;
-            expect(globalQueue.queue).equal(currentQueue1.queue);
+            expect(data).beNil();
             expect(NSThread.isMainThread).beFalsy();
-            [expectation1 fulfill];
+            [expectation fulfill];
         }];
-        [cache queryCacheOperationForKey:@"Key2" options:0 context:context done:^(UIImage * _Nullable image, NSData * _Nullable data, SDImageCacheType cacheType) {
-            SDCallbackQueue *currentQueue2 = SDCallbackQueue.currentQueue;
-            expect(globalQueue.queue).equal(currentQueue2.queue);
-            expect(NSThread.isMainThread).beFalsy();
-            [expectation2 fulfill];
+        [cache storeImageData:pngData forKey:@"Key1" completion:^{
+            [expectation fulfill];
         }];
     }];
     
-    [self waitForExpectationsWithTimeout:10 handler:^(NSError * _Nullable error) {
-        [cache clearDiskOnCompletion:nil];
-    }];
-}
- */
-
-- (void)test49DiskCacheKeyForInvalidURL {
-    NSURL *url1 = [NSURL URLWithString:@"http://e.hiphotos.baidu.com/image/pic/item/a1ec08fa513d2697e542494057fbb2fb4316d81e.jpg00%00"];
-    expect([url1.pathExtension hasSuffix:@"\0"]).beTruthy(); // Test Foundation API behavior here
-    expect(url1).notTo.beNil();
-    NSString *key1 = [SDWebImageManager.sharedManager cacheKeyForURL:url1];
-    expect(key1).notTo.beNil();
-    NSString *path1 = [SDImageCache.sharedImageCache.diskCache cachePathForKey:key1];
-    NSString *ext1 = path1.pathExtension;
-    expect(ext1).equal(@"jpg00");
-    
-    NSURL *url2 = [NSURL URLWithString:@"https://maps.googleapis.com/maps/api/staticmap?center=48.8566,2.3522&format=png&maptype=roadmap&scale=2&size=375x200&zoom=15"];
-    expect(url2.pathExtension.length).equal(0); // Test Foundation API behavior here
-    expect(url2).notTo.beNil();
-    NSString *key2 = [SDWebImageManager.sharedManager cacheKeyForURL:url2];
-    expect(key2).notTo.beNil();
-    NSString *path2 = [SDImageCache.sharedImageCache.diskCache cachePathForKey:key2];
-    expect(path2).notTo.beNil();
-    NSString *ext2 = path2.pathExtension;
-    expect(ext2).equal(@"");
+    [self waitForExpectationsWithCommonTimeout];
 }
 
 #pragma mark - SDImageCache & SDImageCachesManager

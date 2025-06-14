@@ -825,17 +825,14 @@
     [self waitForExpectations:expectations timeout:kAsyncTestTimeout * 2];
 }
 
+
 - (void)test31ThatMultipleRequestForSameURLFailedCallback {
     // See #3493, silly bug
-    // Create tmp file with empty contents
-    NSURL *dir = [[NSURL fileURLWithPath:NSTemporaryDirectory()] URLByAppendingPathComponent:NSStringFromSelector(_cmd) isDirectory: true];
-    [NSFileManager.defaultManager createDirectoryAtURL:dir withIntermediateDirectories:YES attributes:nil error:nil];
-    NSURL *url = [dir URLByAppendingPathComponent:@"file" isDirectory:NO];
-    [[NSData data] writeToURL:url atomically:YES]; // Always fail url (but valid)
-    NSMutableArray<XCTestExpectation *> *expectations = [NSMutableArray arrayWithCapacity:10];
+    NSURL *url = [NSURL fileURLWithPath:@"/dev/null"]; // Always fail url
+    NSMutableArray<XCTestExpectation *> *expectations = [NSMutableArray arrayWithCapacity:100];
     __block void (^recursiveBlock)(int);
     void (^mainBlock)(int) = ^(int i) {
-        if (i > 10) return;
+        if (i > 200) return;
         NSString *desc = [NSString stringWithFormat:@"Failed url with index %d should callback error", i];
         XCTestExpectation *expectation = [self expectationWithDescription:desc];
         [expectations addObject:expectation];
@@ -855,6 +852,7 @@
     
     [self waitForExpectations:expectations timeout:kAsyncTestTimeout * 2];
 }
+
 
 #pragma mark - SDWebImageLoader
 - (void)testCustomImageLoaderWorks {

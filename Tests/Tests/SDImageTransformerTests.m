@@ -14,20 +14,8 @@
 static void SDAssertCGImagePixelFormatEqual(CGImageRef image1, CGImageRef image2) {
     CGBitmapInfo bitmapInfo1 = CGImageGetBitmapInfo(image1);
     CGBitmapInfo bitmapInfo2 = CGImageGetBitmapInfo(image2);
-//    XCTAssertEqual(bitmapInfo1, bitmapInfo2);
-    CGImageAlphaInfo alphaInfo1 = bitmapInfo1 & kCGBitmapAlphaInfoMask;
-    CGImageAlphaInfo alphaInfo2 = bitmapInfo2 & kCGBitmapAlphaInfoMask;
-    XCTAssertEqual(alphaInfo1, alphaInfo2);
-    CGImageByteOrderInfo byteOrderInfo1 = bitmapInfo1 & kCGBitmapByteOrderMask;
-    CGImageByteOrderInfo byteOrderInfo2 = bitmapInfo2 & kCGBitmapByteOrderMask;
-    // Note: Known issue that iOS 17.0~17.2 contains BUG that vImage convert CGImage does not keep byteOrder for 16bit
-    // The Buggy API is: `vImageCreateCGImageFromBuffer`, the `format`'s bitmap info will be ignored.
-    if (byteOrderInfo1 != byteOrderInfo2) {
-        NSLog(@"SDAssertCGImagePixelFormatEqual: mismatched byte order info, maybe Apple's Bug on iOS 17.0-17.2");
-    }
-    if (@available(iOS 12.0, tvOS 12.0, macOS 10.14, watchOS 5.0, *)) {
-        XCTAssertEqual(CGImageGetPixelFormatInfo(image1), CGImageGetPixelFormatInfo(image2));
-    }
+    XCTAssertEqual(bitmapInfo1, bitmapInfo2);
+    // alphaInfo && byteOrderInfo && pixelFomat are just calculation of bitmapInfo
     XCTAssertEqual(CGImageGetColorSpace(image1), CGImageGetColorSpace(image2));
     XCTAssertEqual(CGImageGetBitsPerPixel(image1), CGImageGetBitsPerPixel(image2));
     XCTAssertEqual(CGImageGetBitsPerComponent(image1), CGImageGetBitsPerComponent(image2));
@@ -242,35 +230,7 @@ static void SDAssertCGImageFirstComponentWhite(CGImageRef image, OSType pixelTyp
     // Check rounded corner operation not inversion the image
     UIColor *topCenterColor = [tintedImage sd_colorAtPoint:CGPointMake(150, 20)];
     expect([topCenterColor.sd_hexString isEqualToString:[UIColor blackColor].sd_hexString]).beTruthy();
-    
-    UIImage *tintedSourceInImage = [testImage sd_tintedImageWithColor:tintColor blendMode:kCGBlendModeSourceIn];
-    topCenterColor = [tintedSourceInImage sd_colorAtPoint:CGPointMake(150, 20)];
-#if SD_UIKIT
-    // Test UIKit's tint color behavior
-    if (@available(iOS 13.0, tvOS 13.0, watchOS 6.0, *)) {
-        UIImage *tintedSystemImage = [testImage imageWithTintColor:tintColor renderingMode:UIImageRenderingModeAlwaysTemplate];
-        UIGraphicsImageRendererFormat *format = UIGraphicsImageRendererFormat.preferredFormat;
-        format.scale = tintedSourceInImage.scale;
-        UIGraphicsImageRenderer *renderer = [[UIGraphicsImageRenderer alloc] initWithSize:tintedSystemImage.size format:format];
-        // Draw template image
-        tintedSystemImage = [renderer imageWithActions:^(UIGraphicsImageRendererContext * _Nonnull rendererContext) {
-                [tintedSystemImage drawInRect:CGRectMake(0, 0, tintedSystemImage.size.width, tintedSystemImage.size.height)];
-        }];
-        UIColor *testColor1 = [tintedSourceInImage sd_colorAtPoint:CGPointMake(150, 20)];
-        UIColor *testColor2 = [tintedSystemImage sd_colorAtPoint:CGPointMake(150, 20)];
-        CGFloat r1, g1, b1, a1;
-        CGFloat r2, g2, b2, a2;
-        [testColor1 getRed:&r1 green:&g1 blue:&b1 alpha:&a1];
-        [testColor2 getRed:&r2 green:&g2 blue:&b2 alpha:&a2];
-        expect(r1).beCloseToWithin(r2, 0.01);
-        expect(g1).beCloseToWithin(g2, 0.01);
-        expect(b1).beCloseToWithin(b2, 0.01);
-        expect(a1).beCloseToWithin(a2, 0.01);
-    }
-#endif
-    expect([topCenterColor.sd_hexString isEqualToString:tintColor.sd_hexString]).beTruthy();
 }
-#pragma clang diagnostic pop
 
 - (void)test07UIImageTransformBlurCG {
     [self test07UIImageTransformBlurWithImage:self.testImageCG];
@@ -381,7 +341,7 @@ static void SDAssertCGImageFirstComponentWhite(CGImageRef image, OSType pixelTyp
                       @"SDImageRoundCornerTransformer(50.000000,18446744073709551615,1.000000,#ff000000)",
                       @"SDImageFlippingTransformer(1,1)",
                       @"SDImageCroppingTransformer({0.000000,0.000000,50.000000,50.000000})",
-                      @"SDImageTintTransformer(#00000000,18)",
+                      @"SDImageTintTransformer(#00000000)",
                       @"SDImageBlurTransformer(5.000000)",
                       @"SDImageFilterTransformer(CIColorInvert)"
                       ];
